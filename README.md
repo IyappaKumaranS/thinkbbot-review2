@@ -2,11 +2,6 @@
 
 A two-part project with a **FastAPI** backend and a **Node/Vite (React or similar)** frontend.
 
----
-
-> All commands below use Windows paths to match your setup.
-
----
 ## Project Structure (suggested)
 
 ```
@@ -41,15 +36,6 @@ install the core packages directly
 pip install fastapi uvicorn nltk odfpy tqdm
 ```
 
-> Optional: if your code uses specific NLTK resources, download them once:
-
-```python
-# run this once in Python shell
-import nltk
-nltk.download('punkt')
-nltk.download('stopwords')
-```
-
 3. **Run the backend (dev)**
 
 ```powershell
@@ -74,8 +60,6 @@ npm run dev
 
 ---
 
-
-
 Open two terminals:
 
 1. **Backend**
@@ -91,6 +75,7 @@ Open two terminals:
    cd ThinkBot-Review2\project
    npm run dev
    ```
+
 
 
 
