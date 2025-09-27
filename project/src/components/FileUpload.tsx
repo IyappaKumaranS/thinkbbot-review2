@@ -192,7 +192,7 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFileUpload, onResult, isAnaly
     try {
       const formData = new FormData();
       formData.append("file", file);
-      formData.append("api_key", "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");
+      formData.append("api_key", "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");
 
       const response = await fetch("http://127.0.0.1:8000/run-pipeline", {
         method: "POST",

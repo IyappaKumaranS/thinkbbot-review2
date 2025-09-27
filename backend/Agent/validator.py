@@ -35,10 +35,38 @@ class ValidatorAgent:
         
         return 0, []
 
-    def query_mistral(self) -> str:
+    def _validate_scores(self, data: dict) -> bool:
+        """Validate that scores are present and within valid range."""
+        if not isinstance(data, dict) or "validation_scores" not in data:
+            return False
+            
+        scores = data["validation_scores"]
+        if not isinstance(scores, dict):
+            return False
+            
+        required_scores = [
+            "uniqueness", "feasibility", "market_trend",
+            "scalability", "problem_relevance", "user_adoption_potential"
+        ]
+        
+        # Check if all required scores exist and are valid
+        for score_name in required_scores:
+            if score_name not in scores:
+                return False
+            try:
+                score_value = float(scores[score_name])
+                if not (0 <= score_value <= 10):
+                    return False
+            except (ValueError, TypeError):
+                return False
+                
+        return True
+
+    def query_mistral(self, max_retries: int = 3) -> str:
         """
         Validate the product idea using Mistral-7B and COSTAR framework.
         Returns structured JSON with validation scores.
+        Includes retry logic for better reliability.
         """
         # First analyze competitors
         avg_similarity, top_competitors = self._analyze_competitors()
@@ -58,52 +86,57 @@ class ValidatorAgent:
 
         # Detailed COSTAR prompt
         prompt = f"""
-        Use the COSTAR framework to validate the following startup idea.
+        As a startup validation expert, use the COSTAR framework to provide a detailed numerical assessment of this startup idea.
+        You must provide specific numerical scores for each criterion. Scores MUST be between 0-10.
 
         C (Context): 
-        The user has provided a startup idea. 
-        Your task is to evaluate its real-world potential across multiple key dimensions.
+        Startup Idea: "{self.text_data}"
         
-        Input Idea: "{self.text_data}"
-        
-        Competitor Analysis:
-        Average Similarity with Competitors: {avg_similarity}%
-        Top Similar Competitors:
+        Market Research:
+        - Average Competitor Similarity: {avg_similarity}%
+        - Competition Overview:
         {competitor_context}
 
         O (Objective): 
-        Provide a **quantitative validation** of the idea based on competitor analysis:
-        
-        - Uniqueness: Score INVERSELY based on competitor similarity
-          * If avg similarity > 80%: Score 1-3 (very similar to existing solutions)
-          * If avg similarity 60-80%: Score 3-5 (somewhat similar)
-          * If avg similarity 40-60%: Score 5-7 (moderately unique)
-          * If avg similarity < 40%: Score 7-10 (highly unique)
-        
-        - Market Opportunity: Score INVERSELY based on number of similar competitors
-          * Many very similar competitors (>3): Score 1-4 (saturated market)
-          * Few similar competitors (1-3): Score 4-7 (competitive but with space)
-          * No direct competitors: Score 7-10 (blue ocean opportunity)
-        
-        - Feasibility: Score based on:
-          * Technical complexity relative to existing solutions
-          * Resource requirements
-          * Implementation challenges
-        
-        - Market Trend & Timing: Consider
-          * Current market direction
-          * Technology readiness
-          * User readiness for the solution
-        
-        - Scalability: Evaluate
-          * Growth potential
-          * Market size
-          * Expansion possibilities
-        
-        - Problem Relevance: Assess
-          * Pain point severity
-          * Target market size
-          * Urgency of the solution
+        Score each dimension from 0-10 using these specific criteria:
+
+        1. Uniqueness Score (0-10):
+        - Score 9-10: Highly unique, no direct competitors
+        - Score 7-8: Novel approach in existing market
+        - Score 5-6: Differentiated from competitors
+        - Score 3-4: Similar to existing solutions
+        - Score 1-2: Very similar to competitors
+        Base this INVERSELY on competitor similarity: Higher similarity = LOWER score
+
+        2. Feasibility Score (0-10):
+        - Technical complexity (3 points)
+        - Resource requirements (4 points)
+        - Implementation timeline (3 points)
+        Add points based on realistic implementation potential
+
+        3. Market Trend Score (0-10):
+        - Growing market (4 points)
+        - Technology readiness (3 points)
+        - User adoption readiness (3 points)
+        Add points based on market timing and trends
+
+        4. Scalability Score (0-10):
+        - Market size potential (4 points)
+        - Geographic expansion possible (3 points)
+        - Revenue scaling potential (3 points)
+        Add points based on growth potential
+
+        5. Problem Relevance Score (0-10):
+        - Pain point severity (4 points)
+        - Target market size (3 points)
+        - Problem urgency (3 points)
+        Add points based on problem importance
+
+        6. User Adoption Score (0-10):
+        - Value proposition clarity (3 points)
+        - Ease of adoption (4 points)
+        - User benefit ratio (3 points)
+        Add points based on likely user acceptance
 
         S (Style): 
         - Use structured analysis, be concise and clear.
@@ -149,16 +182,87 @@ class ValidatorAgent:
             ]
         }
 
-        response = requests.post(url, headers=headers, data=json.dumps(data))
-
-        if response.status_code == 200:
-            return response.json()["choices"][0]["message"]["content"]
-        else:
-            raise Exception(f"Error: {response.status_code}, {response.text}")
+        last_error = None
+        for attempt in range(max_retries):
+            try:
+                response = requests.post(url, headers=headers, data=json.dumps(data))
+                
+                if response.status_code == 200:
+                    try:
+                        response_content = response.json()["choices"][0]["message"]["content"]
+                        if not response_content or response_content.isspace():
+                            raise ValueError("Empty response from API")
+                            
+                        # Try to parse JSON response
+                        try:
+                            parsed_data = json.loads(response_content.strip())
+                        except json.JSONDecodeError:
+                            # Try to extract JSON from text
+                            import re
+                            json_match = re.search(r'\{[\s\S]*\}', response_content)
+                            if json_match:
+                                parsed_data = json.loads(json_match.group())
+                            else:
+                                raise ValueError("No valid JSON found in response")
+                        
+                        # Validate scores
+                        if self._validate_scores(parsed_data):
+                            # If scores are valid, ensure proper number formatting
+                            scores = parsed_data["validation_scores"]
+                            for key in scores:
+                                scores[key] = round(float(scores[key]))
+                            
+                            # Recalculate overall score
+                            parsed_data["overall_score"] = sum(scores.values())
+                            
+                            return json.dumps(parsed_data, ensure_ascii=False, indent=2)
+                        else:
+                            raise ValueError("Invalid score values in response")
+                            
+                    except Exception as e:
+                        last_error = str(e)
+                        if attempt < max_retries - 1:  # Don't sleep on last attempt
+                            import time
+                            time.sleep(2 ** attempt)  # Exponential backoff
+                        continue
+                        
+                elif response.status_code == 429:  # Rate limit
+                    last_error = "Rate limit exceeded"
+                    if attempt < max_retries - 1:
+                        import time
+                        time.sleep(2 ** attempt)
+                    continue
+                    
+                else:
+                    last_error = f"HTTP {response.status_code}: {response.text}"
+                    break
+                    
+            except Exception as e:
+                last_error = str(e)
+                if attempt < max_retries - 1:
+                    import time
+                    time.sleep(1)
+                continue
+                
+        # If all retries failed, return structured error response
+        error_response = {
+            "validation_scores": {
+                "uniqueness": 0,
+                "feasibility": 0,
+                "market_trend": 0,
+                "scalability": 0,
+                "problem_relevance": 0,
+                "user_adoption_potential": 0
+            },
+            "overall_score": 0,
+            "error": f"Failed to get valid validation scores after {max_retries} attempts. Last error: {last_error}",
+            "raw_response": response_content if 'response_content' in locals() else None
+        }
+        return json.dumps(error_response, ensure_ascii=False, indent=2)
 
 
 if __name__ == "__main__":
-    api_key = "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"  
+    api_key = "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"  
     file_path = r"S:\ThinkBot-new\backend\text_files\ecommerce.txt"  
 
     agent = ValidatorAgent(api_key, file_path)

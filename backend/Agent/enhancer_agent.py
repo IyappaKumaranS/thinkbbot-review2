@@ -7,6 +7,21 @@ class EnhancerAgent:
         self.api_key = api_key
         self.idea_file_path = idea_file_path
         self.model = "mistralai/mistral-7b-instruct"
+        
+    def _similarity_score(self, text1: str, text2: str) -> float:
+        """Calculate similarity between two texts using character-level comparison."""
+        if not text1 or not text2:
+            return 0.0
+            
+        # Convert to sets of words for comparison
+        words1 = set(text1.lower().split())
+        words2 = set(text2.lower().split())
+        
+        # Calculate Jaccard similarity
+        intersection = len(words1.intersection(words2))
+        union = len(words1.union(words2))
+        
+        return intersection / union if union > 0 else 0.0
 
     def _load_idea(self) -> str:
         """Load user preprocessed idea text from file."""
@@ -65,27 +80,59 @@ that are not already covered by the listed competitors.
 
         if resp.status_code == 200:
             content = resp.json()["choices"][0]["message"]["content"].strip()
+            if not content:
+                raise ValueError("Empty response from API")
             
-            # Clean up the response text
-            # Remove any markdown list markers
-            content = content.replace('*', '').replace('-', '')
-            # Remove any numbering (1., 2., etc)
-            lines = content.split('\n')
-            cleaned_lines = []
-            for line in lines:
-                # Remove numbering and common prefixes
-                line = line.strip()
-                # Remove numbered lists (1., 2., etc)
-                if line and line[0].isdigit():
-                    line = '.'.join(line.split('.')[1:]).strip()
-                # Remove any remaining special characters at start
-                line = line.lstrip('.-●•○◆◇■□▪️▫️►→').strip()
-                # Only add non-empty lines
-                if line:
-                    cleaned_lines.append(line)
+            # Split into paragraphs/sections and clean up
+            sections = content.split('\n\n')
+            unique_sections = []
+            seen_content = set()
             
-            # Join back into text
-            cleaned_content = '\n'.join(cleaned_lines)
+            for section in sections:
+                if not section.strip():
+                    continue
+                
+                # Clean up the section
+                lines = section.split('\n')
+                cleaned_lines = []
+                
+                for line in lines:
+                    # Basic cleanup
+                    line = line.strip()
+                    if not line:
+                        continue
+                    
+                    # Remove markdown and numbering
+                    line = line.replace('*', '').replace('-', '')
+                    if line and line[0].isdigit():
+                        line = '.'.join(line.split('.')[1:]).strip()
+                    line = line.lstrip('.-●•○◆◇■□▪️▫️►→').strip()
+                    
+                    if line:
+                        cleaned_lines.append(line)
+                
+                if not cleaned_lines:
+                    continue
+                
+                # Join lines in this section
+                cleaned_section = ' '.join(cleaned_lines)
+                
+                # Check for near-duplicates using similarity score
+                is_duplicate = False
+                for seen in list(seen_content):
+                    if (cleaned_section.lower() in seen.lower() or 
+                        seen.lower() in cleaned_section.lower() or
+                        self._similarity_score(cleaned_section, seen) > 0.7):
+                        is_duplicate = True
+                        break
+                
+                # Only add unique sections
+                if not is_duplicate:
+                    seen_content.add(cleaned_section)
+                    unique_sections.append(cleaned_section)
+            
+            # Join unique sections with proper spacing
+            cleaned_content = '\n\n'.join(unique_sections)
             return cleaned_content
         else:
             return f"Error: {resp.status_code}, {resp.text}"
@@ -93,7 +140,7 @@ that are not already covered by the listed competitors.
 
 
 if __name__ == "__main__":
-    API_KEY = "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"  
+    API_KEY = "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"  
     idea_file = r"S:\ThinkBot-new\backend\text_files\ecommerce.txt"
 
     enhancer = EnhancerAgent(API_KEY, idea_file)

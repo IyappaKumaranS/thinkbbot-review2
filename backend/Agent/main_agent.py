@@ -137,7 +137,7 @@ class MainAgent:
 
 
 if __name__ == "__main__":
-    API_KEY = "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"
+    API_KEY = "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"
     FILE_PATH = r"S:\ThinkBot-new\backend\text_files\ecommerce.txt"
 
     main = MainAgent(API_KEY, FILE_PATH)

@@ -1,3 +1,4 @@
+import json
 from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from Agent.main_agent import MainAgent
@@ -28,16 +29,39 @@ async def run_pipeline(file: UploadFile = File(...), api_key: str = Form(...)):
 
         # Run the main agent pipeline
         main_agent = MainAgent(api_key, file_path)
-        result = main_agent.run_pipeline()
+        try:
+            result = main_agent.run_pipeline()
+            
+            # Validate the result structure
+            expected_fields = {"scores", "suggestions", "competitors"}
+            if not all(field in result for field in expected_fields):
+                missing = expected_fields - set(result.keys())
+                for field in missing:
+                    result[field] = []
+            
+            return result
+        except json.JSONDecodeError as je:
+            return {
+                "scores": [],
+                "suggestions": [],
+                "competitors": [],
+                "error": f"Invalid JSON response: {str(je)}",
+            }
+        except Exception as e:
+            return {
+                "scores": [],
+                "suggestions": [],
+                "competitors": [],
+                "error": f"Pipeline error: {str(e)}",
+            }
 
-        return result
     except Exception as e:
         # Always return all expected fields for frontend compatibility
         return {
             "scores": [],
             "suggestions": [],
             "competitors": [],
-            "error": str(e),
+            "error": f"File upload error: {str(e)}",
         }
 
 @app.get("/")
